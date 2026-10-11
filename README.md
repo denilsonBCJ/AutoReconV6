@@ -1,14 +1,14 @@
-# 🎯 AutoReconV6 - Bug Bounty Recon & Post-Recon Automator
+# 🎯 AutoReconV6.3 - Bug Bounty Recon & Post-Recon Automator
 
 ![Bash](https://img.shields.io/badge/Language-Bash-4EAA25?style=for-the-badge&logo=gnu-bash&logoColor=white)
 ![Security](https://img.shields.io/badge/Category-AppSec_&_BugBounty-red?style=for-the-badge)
 ![Status](https://img.shields.io/badge/Status-Active-brightgreen?style=for-the-badge)
 
-O **AutoReconV6 (No-PortScan & Deep CMS/JS Edition)** é um framework em Bash voltado para automação agressiva de reconhecimento na camada de aplicação (Web). 
+O **AutoReconV6.3 (No-PortScan & Deep CMS/JS Edition)** é um framework em Bash voltado para automação agressiva de reconhecimento na camada de aplicação (Web). 
 
 Nesta versão, o ruído de *port scanning* pesado foi removido para focar 100% em **Application Security**: extração de parâmetros vulneráveis, caça a chaves de API/Segredos vazados em arquivos JavaScript e exploração automatizada de instâncias WordPress (CMS). É a ferramenta perfeita para mapear cirurgicamente a superfície de ataque web de um alvo.
 
-**Novidade (v6.1):** suporte a header HTTP customizado (ex: identificação de pesquisa `X-HackerOne-Research`) e a rate limit configurável, repassados automaticamente para as ferramentas da pipeline. Veja a seção [⚙️ Parâmetros Opcionais](#️-parâmetros-opcionais-v61).
+**Novidade (v6.3):** suporte a header HTTP customizado (ex: identificação de pesquisa `X-HackerOne-Research`) e a rate limit configurável, repassados automaticamente para as ferramentas da pipeline. Veja a seção [⚙️ Parâmetros Opcionais](#️-parâmetros-opcionais-v63).
 
 ---
 
@@ -105,23 +105,23 @@ git clone https://github.com/denilsonBCJ/AutoReconV6.git
 cd AutoReconV6
 
 # Dê permissão de execução
-chmod +x AutoReconV6.sh
+chmod +x AutoReconV6.3.sh
 
 # Execute apontando para o seu alvo (forma básica)
-./AutoReconV6.sh target.com
+./AutoReconV6.3.sh target.com
 ```
 
 ### Com header customizado e/ou rate limit (v6.1)
 
 ```bash
 # Só com header de identificação de pesquisa
-./AutoReconV6.sh target.com -H "X-HackerOne-Research: faisca"
+./AutoReconV6.3.sh target.com -H "X-HackerOne-Research: faisca"
 
 # Só com rate limit (requisições/segundo)
-./AutoReconV6.sh target.com -R 10
+./AutoReconV6.3.sh target.com -R 10
 
 # Combinando os dois (ordem dos parâmetros não importa)
-./AutoReconV6.sh target.com -H "X-HackerOne-Research: faisca" -R 10
+./AutoReconV6.3.sh target.com -H "X-HackerOne-Research: faisca" -R 10
 ```
 
 Se nenhuma das duas flags for passada, o script roda exatamente como antes, usando os valores padrão de cada ferramenta.
@@ -154,7 +154,7 @@ Use `-R` menor (ex: `-R 5` ou `-R 10`) em alvos sensíveis ou com WAF agressivo,
 ### Ajuda rápida
 
 ```bash
-./AutoReconV6.sh -h
+./AutoReconV6.3.sh -h
 ```
 
 ### Estrutura de Diretórios Gerada
