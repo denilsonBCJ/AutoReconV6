@@ -56,20 +56,20 @@ export PATH=$PATH:/usr/local/go/bin:$GOPATH/bin
 
 ### 3. Instalando as Ferramentas do ProjectDiscovery & Comunidade
 ```bash
-go install -v https://github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest
-go install -v https://github.com/projectdiscovery/httpx/cmd/httpx@latest
-go install -v https://github.com/projectdiscovery/katana/cmd/katana@latest
-go install -v https://github.com/projectdiscovery/nuclei/v2/cmd/nuclei@latest
-go install -v https://github.com/tomnomnom/waybackurls@latest
-go install -v https://github.com/lc/gau/v2/cmd/gau@latest
-go install -v https://github.com/tomnomnom/anew@latest
-go install -v https://github.com/tomnomnom/gf@latest
+go install github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest
+go install github.com/projectdiscovery/httpx/cmd/httpx@latest
+go install github.com/projectdiscovery/katana/cmd/katana@latest
+go install github.com/projectdiscovery/nuclei/v2/cmd/nuclei@latest
+go install github.com/tomnomnom/waybackurls@latest
+go install github.com/lc/gau/v2/cmd/gau@latest
+go install github.com/tomnomnom/anew@latest
+go install github.com/tomnomnom/gf@latest
 ```
 
 ### 4. Instalando o PureDNS (Requer Massdns)
 ```bash
 sudo apt install -y massdns
-go install https://github.com/d3mondev/puredns/v2@latest
+go install github.com/d3mondev/puredns/v2@latest
 ```
 
 ### 5. Configurando o GF e as Patterns
