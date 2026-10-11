@@ -308,7 +308,12 @@ echo -e "${CYAN}Workspace: $WORK${RESET}"
 # ===== FASE 1: SUBDOMÍNIOS =====
 print_banner "FASE 1: Subdomínios"
 subfinder -d "$DOMAIN" "${SUBFINDER_RATE_ARGS[@]}" -silent > "$WORK/subs_passive.txt"
-curl -s --max-time 30 "https://crt.sh/?q=%.$DOMAIN&output=json" | jq -r '.[].name_value' | sed 's/\*\.//g' | sort -u >> "$WORK/subs_passive.txt"
+CRTSH_JSON=$(fetch_crtsh "$DOMAIN")
+if [ $? -eq 0 ]; then
+    echo "$CRTSH_JSON" | jq -r '.[].name_value' | sed 's/\*\.//g' | sort -u >> "$WORK/subs_passive.txt"
+else
+    echo -e "${YELLOW}[!] crt.sh indisponível após 3 tentativas — seguindo só com subfinder.${RESET}"
+fi
 sort -u "$WORK/subs_passive.txt" > "$WORK/subs_all.txt"
 
 # ===== FASE 2: DNS =====
