@@ -159,7 +159,18 @@ EOF
 EOF
     fi
 }
-
+fetch_crtsh() {
+    local domain="$1" attempt json
+    for attempt in 1 2 3; do
+        json=$(curl -s --max-time 20 "https://crt.sh/?q=%.$domain&output=json")
+        if echo "$json" | jq -e . >/dev/null 2>&1; then
+            echo "$json"
+            return 0
+        fi
+        sleep 2
+    done
+    return 1
+}
 # Roda "gf <pattern>" se o arquivo de pattern existir em ~/.gf; senão avisa e
 # gera um arquivo de saída vazio, sem travar o resto do pipeline.
 gf_classify() {
