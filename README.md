@@ -37,9 +37,10 @@ Ambiente: Linux (Ubuntu/Debian, Kali, Parrot) ou WSL.
 sudo apt update -y
 sudo apt install -y curl wget jq git wpscan golang massdns
 
-# Adicione ao ~/.bashrc ou ~/.zshrc:
+
 export GOPATH=$HOME/go
 export PATH=$PATH:/usr/local/go/bin:$GOPATH/bin
+# Adicione ao ~/.bashrc ou ~/.zshrc:
 source ~/.bashrc
 
 # Ferramentas ProjectDiscovery & comunidade
