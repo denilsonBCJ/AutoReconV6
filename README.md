@@ -8,6 +8,8 @@ O **AutoReconV6 (No-PortScan & Deep CMS/JS Edition)** é um framework em Bash vo
 
 Nesta versão, o ruído de *port scanning* pesado foi removido para focar 100% em **Application Security**: extração de parâmetros vulneráveis, caça a chaves de API/Segredos vazados em arquivos JavaScript e exploração automatizada de instâncias WordPress (CMS). É a ferramenta perfeita para mapear cirurgicamente a superfície de ataque web de um alvo.
 
+**Novidade (v6.1):** suporte a header HTTP customizado (ex: identificação de pesquisa `X-HackerOne-Research`) e a rate limit configurável, repassados automaticamente para as ferramentas da pipeline. Veja a seção [⚙️ Parâmetros Opcionais](#️-parâmetros-opcionais-v61).
+
 ---
 
 ## 🧠 Fluxo de Execução (As 11 Fases)
@@ -105,8 +107,54 @@ cd AutoReconV5-
 # Dê permissão de execução
 chmod +x AutoReconV6.sh
 
-# Execute apontando para o seu alvo
+# Execute apontando para o seu alvo (forma básica)
 ./AutoReconV6.sh target.com
+```
+
+### Com header customizado e/ou rate limit (v6.1)
+
+```bash
+# Só com header de identificação de pesquisa
+./AutoReconV6.sh target.com -H "X-HackerOne-Research: faisca"
+
+# Só com rate limit (requisições/segundo)
+./AutoReconV6.sh target.com -R 10
+
+# Combinando os dois (ordem dos parâmetros não importa)
+./AutoReconV6.sh target.com -H "X-HackerOne-Research: faisca" -R 10
+```
+
+Se nenhuma das duas flags for passada, o script roda exatamente como antes, usando os valores padrão de cada ferramenta.
+
+---
+
+## ⚙️ Parâmetros Opcionais (v6.1)
+
+| Flag | Descrição | Exemplo |
+|---|---|---|
+| `-H "Header: Valor"` | Header HTTP customizado enviado nas requisições feitas **contra o alvo**. Útil para se identificar em programas que pedem isso (ex: `X-HackerOne-Research`). | `-H "X-HackerOne-Research: faisca"` |
+| `-R <n>` | Limite de requisições por segundo, repassado para as ferramentas da pipeline. Inteiro positivo. | `-R 10` |
+
+**Onde o header (`-H`) é aplicado:** apenas nas ferramentas que fazem requisições diretamente à infraestrutura do alvo — `httpx`, `katana`, `nuclei` e `wpscan` (via `--headers`). Ele **não** é enviado para `subfinder`, `gau`, `waybackurls`, `puredns` ou para a consulta ao `crt.sh`, pois essas requisições vão para serviços de terceiros (Wayback Machine, crt.sh, resolvers DNS, APIs passivas) e não para o alvo em si.
+
+**Onde o rate limit (`-R`) é aplicado:**
+
+| Ferramenta | Flag usada internamente |
+|---|---|
+| `subfinder` | `-rate-limit` |
+| `puredns` | `--rate-limit` |
+| `httpx` | `-rate-limit` |
+| `katana` | `-rate-limit` |
+| `nuclei` | `-rate-limit` |
+| `gau` | `--threads` (aproximação, já que o `gau` não tem rate limit real por segundo) |
+| `wpscan` | `--throttle` em milissegundos, calculado como `1000 / R` |
+
+Use `-R` menor (ex: `-R 5` ou `-R 10`) em alvos sensíveis ou com WAF agressivo, e omita a flag para deixar cada ferramenta rodar no seu ritmo padrão (geralmente mais rápido).
+
+### Ajuda rápida
+
+```bash
+./AutoReconV6.sh -h
 ```
 
 ### Estrutura de Diretórios Gerada
