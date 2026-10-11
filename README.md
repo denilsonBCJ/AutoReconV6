@@ -99,10 +99,10 @@ Com todas as dependências instaladas, clone o repositório e execute:
 
 ```bash
 # Clone o projeto
-git clone https://github.com/denilsonBCJ/AutoReconV5-.git
+git clone https://github.com/denilsonBCJ/AutoReconV6.git
 
 # Acesse a pasta
-cd AutoReconV5-
+cd AutoReconV6
 
 # Dê permissão de execução
 chmod +x AutoReconV6.sh
