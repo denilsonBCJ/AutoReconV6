@@ -2,21 +2,30 @@
 
 # ==========================================
 #  AUTOMAÇÃO RECON + PÓS-RECON (BUG BOUNTY)
-#  Versão: 6.4 (Scoped & Low-Noise Edition)
+#  Versão: 6.5 (Scoped & Low-Noise Edition)
 #
-#  Mudanças vs 6.3:
-#   - Script agora PERGUNTA interativamente o caminho de saída (output dir),
-#     em vez de sempre criar dentro da pasta do projeto ($DOMAIN/recon_$DATE)
-#   - Script agora PERGUNTA interativamente as URLs/domínios em escopo
+#  Mudanças vs 6.4:
+#   - Removida a análise/download de JS (antiga Fase 6: isolamento de
+#     arquivos .js + nuclei procurando chaves/tokens expostos). O passo
+#     inteiro saiu do pipeline.
+#   - .js deixou de ser exceção entre os estáticos: agora é descartado
+#     junto com css/imagem/font/mídia/arquivo em todas as listas de URL,
+#     já que nada mais no script consome arquivos JS
+#   - katana também para de crawlear .js (entrou na lista STATIC_EXT)
+#   - Fases renumeradas: o que era "Fase 7: WPSCAN" virou "Fase 6" sozinha
+#     (não roda mais em paralelo com JS secrets); Params/Vetores/Headers/
+#     Nuclei desceram uma posição (7, 8, 9, 10)
+#
+#  Mudanças vs 6.3 (ainda válidas):
+#   - Script PERGUNTA interativamente o caminho de saída (output dir), em
+#     vez de sempre criar dentro da pasta do projeto ($DOMAIN/recon_$DATE)
+#   - Script PERGUNTA interativamente as URLs/domínios em escopo
 #   - Filtro de escopo aplicado em TODAS as fontes de URL (subdomínios,
 #     historical, crawl) antes de rodar as ferramentas pesadas — não só
 #     no final
 #   - Filtro de ruído: remove domínios irrelevantes de terceiros (Google,
 #     GA/GTM, w3.org, CDNs genéricos, redes sociais, analytics) que não
 #     fazem parte do alvo e só geram tempo de execução perdido
-#   - Filtro de estáticos: de todos os arquivos estáticos encontrados,
-#     SÓ .js é mantido (css/imagens/fonts/mídia/arquivos são descartados
-#     em todas as fases, não só no crawl do katana)
 #   - Filtragem incremental: cada fase já recebe os dados da fase anterior
 #     pré-filtrados (escopo + ruído + estáticos), reduzindo volume e ruído
 #     progressivamente em vez de filtrar só no final
@@ -41,12 +50,13 @@ WPSCAN_PARALLEL=3
 LIVE_STATUS_CODES="200,201,204,301,302,307,308,401,403"
 
 # Extensões estáticas excluídas do crawl ativo (katana) — reduz ruído/tempo
-STATIC_EXT="png,jpg,jpeg,gif,svg,css,woff,woff2,ttf,eot,ico,mp4,mp3,pdf"
+# .js incluído: sem a análise de JS, não há mais motivo pra crawlear esses arquivos.
+STATIC_EXT="png,jpg,jpeg,gif,svg,css,woff,woff2,ttf,eot,ico,mp4,mp3,pdf,js"
 
 # Extensões estáticas excluídas de TODAS as listas de URL pós-coleta
-# (historical, crawl, all_urls). .js propositalmente NÃO entra aqui — é a
-# única estática que interessa (Fase 6: JS Secrets).
-STATIC_EXT_REGEX='\.(png|jpe?g|gif|svg|css|woff2?|ttf|eot|ico|mp4|mp3|pdf|bmp|webp|otf|zip|rar|gz|tar)(\?|$)'
+# (historical, crawl, all_urls). .js agora entra na lista normal — nada no
+# pipeline consome mais arquivos JS isoladamente.
+STATIC_EXT_REGEX='\.(png|jpe?g|gif|svg|css|woff2?|ttf|eot|ico|mp4|mp3|pdf|bmp|webp|otf|zip|rar|gz|tar|js)(\?|$)'
 
 # Domínios de terceiros/ruído comuns (analytics, CDNs genéricos, specs w3,
 # redes sociais) que normalmente NÃO fazem parte do escopo de um programa de
@@ -74,8 +84,8 @@ show_usage() {
     echo "  - Caminho de saída para salvar os resultados (ENTER = <alvo>/recon_<data>)"
     echo "  - URLs/domínios em escopo (ENTER direto = usa só o alvo como escopo)"
     echo "    Tudo que não bater no escopo, for domínio de ruído (ex: google,"
-    echo "    w3.org, analytics) ou for estático não-JS (css/imagem/font/etc)"
-    echo "    é descartado antes das fases pesadas."
+    echo "    w3.org, analytics) ou for estático (css/imagem/font/js/etc) é"
+    echo "    descartado antes das fases pesadas."
     echo ""
     echo "Exemplos:"
     echo "  $0 alvo.com"
@@ -327,7 +337,7 @@ sed 's/^/   - /' "$SCOPE_FILE"
 # "target.com.evil.com" ou "nottarget.com" baterem em "target.com").
 SCOPE_REGEX=$(awk '{gsub(/\./,"\\."); printf "(^|\\.|\\/\\/)%s($|\\/|:|\\?)|", $0}' "$SCOPE_FILE" | sed 's/|$//')
 
-# ===== FUNÇÕES DE FILTRAGEM (escopo + ruído + estáticos não-JS) =====
+# ===== FUNÇÕES DE FILTRAGEM (escopo + ruído + estáticos) =====
 # Escopo + remove domínios de ruído. Para listas de DOMÍNIOS (sem path),
 # ex: subs_all.txt.
 filter_domains() {
@@ -341,7 +351,7 @@ filter_domains() {
     mv "$tmp" "$outfile"
 }
 
-# Escopo + ruído + remove estáticos não-JS (css/img/font/mídia/arquivo).
+# Escopo + ruído + remove estáticos (css/img/font/mídia/arquivo/js).
 # Para listas de URLs completas: historical, crawl, all_urls, final_urls.
 filter_urls() {
     local infile="$1" outfile="$2" tmp
@@ -439,8 +449,8 @@ katana -list "$WORK/final_urls.txt" "${KATANA_HEADER_ARGS[@]}" "${KATANA_RATE_AR
     -silent -jc -d 2 -ef "$STATIC_EXT" -o "$WORK/urls/crawled_raw.txt" &
 wait
 
-# Filtra escopo + ruído + estáticos (mantendo só .js) em CADA fonte, antes de
-# qualquer merge — evita carregar lixo de terceiros pro resto do pipeline.
+# Filtra escopo + ruído + estáticos em CADA fonte, antes de qualquer merge —
+# evita carregar lixo de terceiros pro resto do pipeline.
 filter_urls "$WORK/urls/historical_gau_raw.txt" "$WORK/urls/historical_gau.txt"
 filter_urls "$WORK/urls/historical_wb_raw.txt"  "$WORK/urls/historical_wb.txt"
 filter_urls "$WORK/urls/crawled_raw.txt"        "$WORK/urls/crawled.txt"
@@ -453,28 +463,19 @@ cat "$WORK/urls/"*.txt | sort -u > "$WORK/urls/all_urls.txt"
 filter_urls "$WORK/urls/all_urls.txt" "$WORK/urls/all_urls.txt"
 echo -e "${CYAN}URLs totais após filtro de escopo/ruído/estáticos: $(wc -l < "$WORK/urls/all_urls.txt")${RESET}"
 
-# ===== FASE 6+7: JS SECRETS + WORDPRESS (paralelo) =====
-print_banner "FASE 6+7: JS SECRETS + WPSCAN (paralelo)"
-grep "\.js$" "$WORK/urls/all_urls.txt" | sort -u > "$WORK/urls/js_files.txt"
+# ===== FASE 6: CMS & WPSCAN =====
+print_banner "FASE 6: CMS & WPSCAN"
 grep -i "wordpress" "$WORK/tech/web_info.csv" | awk -F ',' '{print $1}' > "$WORK/cms/wp_targets.txt"
-
-if [ -s "$WORK/urls/js_files.txt" ]; then
-    echo -e "${YELLOW}Buscando chaves de API e Segredos em arquivos JS...${RESET}"
-    nuclei -l "$WORK/urls/js_files.txt" "${NUCLEI_HEADER_ARGS[@]}" "${NUCLEI_RATE_ARGS[@]}" -c "$NUCLEI_CONCURRENCY" \
-        -tags exposure,token,key,api -silent -o "$WORK/tech/js_secrets.txt" &
-fi
 
 if [ -s "$WORK/cms/wp_targets.txt" ]; then
     echo -e "${YELLOW}[!] WordPress detectado. Iniciando wpscan (paralelo, max $WPSCAN_PARALLEL)...${RESET}"
     mkdir -p "$WORK/cms/wpscan_out"
-    (cat "$WORK/cms/wp_targets.txt" | xargs -P "$WPSCAN_PARALLEL" -I{} bash -c 'run_wpscan_one "$@"' _ {}) &
+    cat "$WORK/cms/wp_targets.txt" | xargs -P "$WPSCAN_PARALLEL" -I{} bash -c 'run_wpscan_one "$@"' _ {}
+    cat "$WORK/cms/wpscan_out/"*.txt > "$WORK/cms/wpscan_results.txt" 2>/dev/null
 fi
-wait
 
-[ -d "$WORK/cms/wpscan_out" ] && cat "$WORK/cms/wpscan_out/"*.txt > "$WORK/cms/wpscan_results.txt" 2>/dev/null
-
-# ===== FASE 8: PARÂMETROS (com dedup por assinatura) =====
-print_banner "FASE 8: EXTRAÇÃO DE PARÂMETROS"
+# ===== FASE 7: PARÂMETROS (com dedup por assinatura) =====
+print_banner "FASE 7: EXTRAÇÃO DE PARÂMETROS"
 # Antes: todas as URLs com "=" iam pra classificação, inflando os vetores com
 # milhares de variações do mesmo parâmetro (id=1, id=2, id=3...). Agora: mantém
 # só 1 URL exemplo por combinação única de path + nomes de parâmetros.
@@ -493,8 +494,8 @@ grep "=" "$WORK/urls/all_urls.txt" | sort -u | awk -F'?' '
     }
 }' > "$WORK/params/params.txt"
 
-# ===== FASE 9: CLASSIFICAÇÃO DE VETORES =====
-print_banner "FASE 9: CLASSIFICAÇÃO DE VETORES"
+# ===== FASE 8: CLASSIFICAÇÃO DE VETORES =====
+print_banner "FASE 8: CLASSIFICAÇÃO DE VETORES"
 gf_classify xss      "$WORK/vectors/xss.txt"
 gf_classify sqli     "$WORK/vectors/sqli.txt"
 gf_classify nosqli   "$WORK/vectors/nosqli.txt"
@@ -515,13 +516,13 @@ sort -u "$WORK/vectors/redirect.txt" -o "$WORK/vectors/redirect_sorted.txt" 2>/d
 comm -23 "$WORK/vectors/crlf_raw.txt" "$WORK/vectors/redirect_sorted.txt" > "$WORK/vectors/crlf.txt"
 rm -f "$WORK/vectors/crlf_raw.txt" "$WORK/vectors/redirect_sorted.txt"
 
-# ===== FASE 10: HEADERS =====
-print_banner "FASE 10: HEADERS SENSÍVEIS"
+# ===== FASE 9: HEADERS =====
+print_banner "FASE 9: HEADERS SENSÍVEIS"
 httpx -l "$WORK/final_urls.txt" "${HTTPX_HEADER_ARGS[@]}" "${HTTPX_RATE_ARGS[@]}" -threads "$HTTPX_THREADS" \
     -json -silent | jq -r 'select(.headers) | .url + " => " + (.headers|tostring)' > "$WORK/tech/headers.txt"
 
-# ===== FASE 11: NUCLEI =====
-print_banner "FASE 11: NUCLEI"
+# ===== FASE 10: NUCLEI =====
+print_banner "FASE 10: NUCLEI"
 nuclei -l "$WORK/final_urls.txt" "${NUCLEI_HEADER_ARGS[@]}" "${NUCLEI_RATE_ARGS[@]}" -c "$NUCLEI_CONCURRENCY" \
     -severity critical,high,medium -tags cve,misconfig -silent -o "$WORK/nuclei.txt"
 
@@ -531,9 +532,7 @@ echo -e "📂 Workspace: $WORK"
 echo -e "🎯 Escopo usado: $(wc -l < "$SCOPE_FILE") entrada(s) ($SCOPE_FILE)"
 echo -e "🌐 URLs Web (live, filtradas): $(wc -l < $WORK/final_urls.txt)"
 echo -e "🔗 URLs totais (hist + crawl, já filtradas): $(wc -l < $WORK/urls/all_urls.txt)"
-echo -e "📜 Arquivos JS: $(wc -l < $WORK/urls/js_files.txt)"
 echo -e "🧪 Params (deduplicados): $(wc -l < $WORK/params/params.txt)"
-[ -f "$WORK/tech/js_secrets.txt" ] && echo -e "🔑 JS Secrets: $(wc -l < $WORK/tech/js_secrets.txt)"
 [ -f "$WORK/cms/wpscan_results.txt" ] && echo -e "📝 WPScan Concluído!"
 echo -e "💥 Vulns (nuclei): $(wc -l < $WORK/nuclei.txt)"
 echo -e "🧬 Vetores classificados:"
