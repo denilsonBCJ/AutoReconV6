@@ -2,18 +2,24 @@
 
 # ==========================================
 #  AUTOMAÇÃO RECON + PÓS-RECON (BUG BOUNTY)
-#  Versão: 6.3 (Parallel & Low-Noise Edition)
+#  Versão: 6.4 (Scoped & Low-Noise Edition)
 #
-#  Mudanças vs 6.2:
-#   - Fase 4+5 e Fase 6+7 agora rodam em paralelo (jobs em background + wait)
-#   - wpscan paralelizado via xargs -P (antes: for loop sequencial)
-#   - -threads/-c explícitos em httpx/katana/nuclei (defaults eram conservadores)
-#   - gau/waybackurls recebem domínios nus (subs_alive.txt), não URLs com scheme
-#   - final_urls.txt filtrado por status code relevante (-mc) antes das fases pesadas
-#   - katana exclui extensões estáticas (imagens/css/fonts) do crawl
-#   - Dedup de params por assinatura (path + nomes) antes da Fase 9 — menos ruído/volume
-#   - Padrões gf custom (nosqli/xxe/crlf/ldap) reescritos com termos de maior precisão
-#   - crlf.txt deduplicado contra redirect.txt (eram quase idênticos antes)
+#  Mudanças vs 6.3:
+#   - Script agora PERGUNTA interativamente o caminho de saída (output dir),
+#     em vez de sempre criar dentro da pasta do projeto ($DOMAIN/recon_$DATE)
+#   - Script agora PERGUNTA interativamente as URLs/domínios em escopo
+#   - Filtro de escopo aplicado em TODAS as fontes de URL (subdomínios,
+#     historical, crawl) antes de rodar as ferramentas pesadas — não só
+#     no final
+#   - Filtro de ruído: remove domínios irrelevantes de terceiros (Google,
+#     GA/GTM, w3.org, CDNs genéricos, redes sociais, analytics) que não
+#     fazem parte do alvo e só geram tempo de execução perdido
+#   - Filtro de estáticos: de todos os arquivos estáticos encontrados,
+#     SÓ .js é mantido (css/imagens/fonts/mídia/arquivos são descartados
+#     em todas as fases, não só no crawl do katana)
+#   - Filtragem incremental: cada fase já recebe os dados da fase anterior
+#     pré-filtrados (escopo + ruído + estáticos), reduzindo volume e ruído
+#     progressivamente em vez de filtrar só no final
 # ==========================================
 
 # ===== CORES =====
@@ -37,6 +43,16 @@ LIVE_STATUS_CODES="200,201,204,301,302,307,308,401,403"
 # Extensões estáticas excluídas do crawl ativo (katana) — reduz ruído/tempo
 STATIC_EXT="png,jpg,jpeg,gif,svg,css,woff,woff2,ttf,eot,ico,mp4,mp3,pdf"
 
+# Extensões estáticas excluídas de TODAS as listas de URL pós-coleta
+# (historical, crawl, all_urls). .js propositalmente NÃO entra aqui — é a
+# única estática que interessa (Fase 6: JS Secrets).
+STATIC_EXT_REGEX='\.(png|jpe?g|gif|svg|css|woff2?|ttf|eot|ico|mp4|mp3|pdf|bmp|webp|otf|zip|rar|gz|tar)(\?|$)'
+
+# Domínios de terceiros/ruído comuns (analytics, CDNs genéricos, specs w3,
+# redes sociais) que normalmente NÃO fazem parte do escopo de um programa de
+# bug bounty e só custam tempo de execução. Ajuste à vontade.
+NOISE_REGEX='(^|\.)google(apis|tagmanager|-analytics)?\.com|(^|\.)gstatic\.com|(^|\.)w3\.org|(^|\.)schema\.org|(^|\.)facebook\.com|(^|\.)doubleclick\.net|(^|\.)fontawesome\.com|fonts\.(googleapis|gstatic)\.com|(^|\.)hotjar\.com|(^|\.)segment\.(io|com)|(^|\.)mixpanel\.com|(^|\.)amplitude\.com|(^|\.)sentry\.io|(^|\.)cdn\.jsdelivr\.net|(^|\.)unpkg\.com|(^|\.)bootstrapcdn\.com|(^|\.)jquery\.com|(^|\.)cloudflareinsights\.com|(^|\.)newrelic\.com|(^|\.)nr-data\.net|(^|\.)youtube\.com|(^|\.)twitter\.com|(^|\.)x\.com|(^|\.)linkedin\.com|(^|\.)instagram\.com'
+
 print_banner() {
     echo -e "\n${BLUE}========================================${RESET}"
     echo -e "${YELLOW} ➤ $1 ${RESET}"
@@ -53,6 +69,13 @@ show_usage() {
     echo "  -R <n>                     Limite de requisições/segundo (rate limit) passado"
     echo "                              para as ferramentas que suportam o parâmetro"
     echo "                              (subfinder, puredns, httpx, katana, nuclei, gau, wpscan)."
+    echo ""
+    echo "Logo no início, o script também pergunta interativamente:"
+    echo "  - Caminho de saída para salvar os resultados (ENTER = <alvo>/recon_<data>)"
+    echo "  - URLs/domínios em escopo (ENTER direto = usa só o alvo como escopo)"
+    echo "    Tudo que não bater no escopo, for domínio de ruído (ex: google,"
+    echo "    w3.org, analytics) ou for estático não-JS (css/imagem/font/etc)"
+    echo "    é descartado antes das fases pesadas."
     echo ""
     echo "Exemplos:"
     echo "  $0 alvo.com"
@@ -264,11 +287,75 @@ ensure_custom_gf_patterns
 
 DOMAIN=$(echo "$TARGET" | sed 's|https\?://||;s|/$||')
 DATE=$(date +%F)
-WORK="$DOMAIN/recon_$DATE"
+
+# ===== PERGUNTA 1: CAMINHO DE SAÍDA =====
+# Antes: sempre criava em "$DOMAIN/recon_$DATE" dentro da pasta do projeto.
+# Agora: pergunta onde salvar; ENTER mantém esse mesmo padrão como default.
+DEFAULT_WORK="$DOMAIN/recon_$DATE"
+echo -e "${CYAN}Caminho de saída para os resultados [ENTER = $DEFAULT_WORK]:${RESET}"
+read -rp "saida> " OUTPUT_DIR
+if [ -z "$OUTPUT_DIR" ]; then
+    WORK="$DEFAULT_WORK"
+else
+    WORK="${OUTPUT_DIR%/}"
+fi
 mkdir -p "$WORK"/{urls,params,vectors,tech,cms}
 
 RESOLVERS="$WORK/resolvers.txt"
 [ ! -f "$RESOLVERS" ] && wget -q https://raw.githubusercontent.com/trickest/resolvers/main/resolvers.txt -O "$RESOLVERS"
+
+# ===== PERGUNTA 2: URLs/DOMÍNIOS EM ESCOPO =====
+# Tudo que não bater em nenhuma dessas entradas é descartado nas fases de
+# URL (histórico, crawl, all_urls). ENTER direto = escopo vira só $DOMAIN.
+SCOPE_FILE="$WORK/scope.txt"
+echo -e "${CYAN}Informe as URLs/domínios dentro do escopo, um por linha.${RESET}"
+echo -e "${CYAN}Linha vazia para encerrar. ENTER direto na primeira linha = usa só '$DOMAIN'.${RESET}"
+: > "$SCOPE_FILE"
+while true; do
+    read -rp "escopo> " scope_line
+    [ -z "$scope_line" ] && break
+    echo "$scope_line" | sed 's|https\?://||; s|/$||; s/^\*\.//' >> "$SCOPE_FILE"
+done
+[ ! -s "$SCOPE_FILE" ] && echo "$DOMAIN" >> "$SCOPE_FILE"
+sort -u -o "$SCOPE_FILE" "$SCOPE_FILE"
+
+echo -e "${GREEN}[OK] Escopo definido ($(wc -l < "$SCOPE_FILE") entrada(s)):${RESET}"
+sed 's/^/   - /' "$SCOPE_FILE"
+
+# Regex de escopo: casa host exato ou subdomínio de cada entrada do
+# scope.txt, com âmbito delimitado (evita falso-positivo tipo
+# "target.com.evil.com" ou "nottarget.com" baterem em "target.com").
+SCOPE_REGEX=$(awk '{gsub(/\./,"\\."); printf "(^|\\.|\\/\\/)%s($|\\/|:|\\?)|", $0}' "$SCOPE_FILE" | sed 's/|$//')
+
+# ===== FUNÇÕES DE FILTRAGEM (escopo + ruído + estáticos não-JS) =====
+# Escopo + remove domínios de ruído. Para listas de DOMÍNIOS (sem path),
+# ex: subs_all.txt.
+filter_domains() {
+    local infile="$1" outfile="$2" tmp
+    if [ ! -s "$infile" ]; then
+        : > "$outfile"
+        return
+    fi
+    tmp=$(mktemp)
+    grep -E "$SCOPE_REGEX" "$infile" | grep -viE "$NOISE_REGEX" | sort -u > "$tmp"
+    mv "$tmp" "$outfile"
+}
+
+# Escopo + ruído + remove estáticos não-JS (css/img/font/mídia/arquivo).
+# Para listas de URLs completas: historical, crawl, all_urls, final_urls.
+filter_urls() {
+    local infile="$1" outfile="$2" tmp
+    if [ ! -s "$infile" ]; then
+        : > "$outfile"
+        return
+    fi
+    tmp=$(mktemp)
+    grep -E "$SCOPE_REGEX" "$infile" \
+        | grep -viE "$NOISE_REGEX" \
+        | grep -viE "$STATIC_EXT_REGEX" \
+        | sort -u > "$tmp"
+    mv "$tmp" "$outfile"
+}
 
 # ===== MONTAGEM DOS ARGS EXTRAS POR FERRAMENTA =====
 HTTPX_HEADER_ARGS=()
@@ -302,6 +389,7 @@ export CUSTOM_HEADER THROTTLE_MS WORK
 
 print_banner "RECON INICIADO: $DOMAIN"
 echo -e "${CYAN}Workspace: $WORK${RESET}"
+echo -e "${CYAN}Escopo: $SCOPE_FILE ($(wc -l < "$SCOPE_FILE") entrada(s))${RESET}"
 [ -n "$CUSTOM_HEADER" ] && echo -e "${CYAN}Header customizado: $CUSTOM_HEADER${RESET}"
 [ -n "$MAX_RPS" ] && echo -e "${CYAN}Rate limit: $MAX_RPS req/s${RESET}"
 
@@ -315,6 +403,12 @@ else
     echo -e "${YELLOW}[!] crt.sh indisponível após 3 tentativas — seguindo só com subfinder.${RESET}"
 fi
 sort -u "$WORK/subs_passive.txt" > "$WORK/subs_all.txt"
+
+# Filtra pro escopo informado (remove subdomínios de terceiros que o
+# subfinder/crt.sh às vezes trazem junto, ex: CDNs com CNAME pro alvo).
+filter_domains "$WORK/subs_all.txt" "$WORK/subs_all.txt"
+echo -e "${CYAN}Subdomínios após filtro de escopo: $(wc -l < "$WORK/subs_all.txt")${RESET}"
+[ ! -s "$WORK/subs_all.txt" ] && { echo -e "${RED}[X] Nenhum subdomínio dentro do escopo informado.${RESET}"; exit 1; }
 
 # ===== FASE 2: DNS =====
 print_banner "FASE 2: DNS Resolve"
@@ -339,14 +433,25 @@ httpx -l "$WORK/subs_alive.txt" "${HTTPX_HEADER_ARGS[@]}" "${HTTPX_RATE_ARGS[@]}
 print_banner "FASE 4+5: URLs HISTÓRICAS + CRAWLING ATIVO (paralelo)"
 # gau/waybackurls agora recebem domínios nus (subs_alive.txt), não URLs com
 # scheme — é o formato que essas ferramentas esperam; evita resultado degradado.
-cat "$WORK/subs_alive.txt" | gau "${GAU_RATE_ARGS[@]}" > "$WORK/urls/historical_gau.txt" &
-cat "$WORK/subs_alive.txt" | waybackurls > "$WORK/urls/historical_wb.txt" &
+cat "$WORK/subs_alive.txt" | gau "${GAU_RATE_ARGS[@]}" > "$WORK/urls/historical_gau_raw.txt" &
+cat "$WORK/subs_alive.txt" | waybackurls > "$WORK/urls/historical_wb_raw.txt" &
 katana -list "$WORK/final_urls.txt" "${KATANA_HEADER_ARGS[@]}" "${KATANA_RATE_ARGS[@]}" -c "$KATANA_CONCURRENCY" \
-    -silent -jc -d 2 -ef "$STATIC_EXT" -o "$WORK/urls/crawled.txt" &
+    -silent -jc -d 2 -ef "$STATIC_EXT" -o "$WORK/urls/crawled_raw.txt" &
 wait
+
+# Filtra escopo + ruído + estáticos (mantendo só .js) em CADA fonte, antes de
+# qualquer merge — evita carregar lixo de terceiros pro resto do pipeline.
+filter_urls "$WORK/urls/historical_gau_raw.txt" "$WORK/urls/historical_gau.txt"
+filter_urls "$WORK/urls/historical_wb_raw.txt"  "$WORK/urls/historical_wb.txt"
+filter_urls "$WORK/urls/crawled_raw.txt"        "$WORK/urls/crawled.txt"
+rm -f "$WORK/urls/historical_gau_raw.txt" "$WORK/urls/historical_wb_raw.txt" "$WORK/urls/crawled_raw.txt"
 
 cat "$WORK/urls/historical_gau.txt" "$WORK/urls/historical_wb.txt" | anew "$WORK/urls/historical.txt" > /dev/null
 cat "$WORK/urls/"*.txt | sort -u > "$WORK/urls/all_urls.txt"
+# Segundo passo de filtragem como rede de segurança (ex: historical.txt
+# acumulado em execuções anteriores sem o filtro novo).
+filter_urls "$WORK/urls/all_urls.txt" "$WORK/urls/all_urls.txt"
+echo -e "${CYAN}URLs totais após filtro de escopo/ruído/estáticos: $(wc -l < "$WORK/urls/all_urls.txt")${RESET}"
 
 # ===== FASE 6+7: JS SECRETS + WORDPRESS (paralelo) =====
 print_banner "FASE 6+7: JS SECRETS + WPSCAN (paralelo)"
@@ -423,8 +528,9 @@ nuclei -l "$WORK/final_urls.txt" "${NUCLEI_HEADER_ARGS[@]}" "${NUCLEI_RATE_ARGS[
 # ===== RESUMO =====
 print_banner "RESUMO FINAL"
 echo -e "📂 Workspace: $WORK"
+echo -e "🎯 Escopo usado: $(wc -l < "$SCOPE_FILE") entrada(s) ($SCOPE_FILE)"
 echo -e "🌐 URLs Web (live, filtradas): $(wc -l < $WORK/final_urls.txt)"
-echo -e "🔗 URLs totais (hist + crawl): $(wc -l < $WORK/urls/all_urls.txt)"
+echo -e "🔗 URLs totais (hist + crawl, já filtradas): $(wc -l < $WORK/urls/all_urls.txt)"
 echo -e "📜 Arquivos JS: $(wc -l < $WORK/urls/js_files.txt)"
 echo -e "🧪 Params (deduplicados): $(wc -l < $WORK/params/params.txt)"
 [ -f "$WORK/tech/js_secrets.txt" ] && echo -e "🔑 JS Secrets: $(wc -l < $WORK/tech/js_secrets.txt)"
