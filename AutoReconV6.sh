@@ -2,8 +2,10 @@
 
 # ==========================================
 #  AUTOMAÇÃO RECON + PÓS-RECON (BUG BOUNTY)
-#  Versão: 6.1 (No-PortScan & Deep CMS/JS Edition)
+#  Versão: 6.2 (No-PortScan & Deep CMS/JS Edition)
 #  + Suporte a header customizado (-H) e rate limit (-R)
+#  + Classificação de vetores expandida: XSS, SQLi, NoSQLi, Command Injection,
+#    SSTI, LFI, XXE, SSRF, Open Redirect, CRLF/Header Injection, LDAP Injection
 # ==========================================
 
 # ===== CORES =====
@@ -50,6 +52,137 @@ check_tools() {
             exit 1
         }
     done
+}
+
+# ===== PATTERNS CUSTOMIZADOS DO GF =====
+# xss, sqli, lfi, ssrf e redirect já vêm prontos do setup do README (tomnomnom/gf +
+# 1ndianl33t/Gf-Patterns). Esse mesmo pacote também traz rce.json (Command Injection)
+# e ssti.json (SSTI), só não estavam sendo usados na Fase 9 — agora passam a ser.
+# NoSQLi, XXE, CRLF/Header Injection e LDAP Injection não existem em nenhum pacote
+# público de gf, então o script cria esses patterns sozinho em ~/.gf (só se ainda
+# não existirem — não sobrescreve se você já tiver customizado os seus).
+ensure_custom_gf_patterns() {
+    mkdir -p "$HOME/.gf"
+
+    if [ ! -f "$HOME/.gf/nosqli.json" ]; then
+        cat > "$HOME/.gf/nosqli.json" << 'EOF'
+{
+    "flags": "-iE",
+    "patterns": [
+        "query",
+        "filter",
+        "where",
+        "search",
+        "sort",
+        "aggregate",
+        "operator",
+        "regex",
+        "mongo",
+        "nosql",
+        "collection",
+        "projection",
+        "pipeline",
+        "username",
+        "email",
+        "login",
+        "user",
+        "id"
+    ]
+}
+EOF
+    fi
+
+    if [ ! -f "$HOME/.gf/xxe.json" ]; then
+        cat > "$HOME/.gf/xxe.json" << 'EOF'
+{
+    "flags": "-iE",
+    "patterns": [
+        "xml",
+        "wsdl",
+        "soap",
+        "xsd",
+        "svg",
+        "rss",
+        "feed",
+        "atom",
+        "import",
+        "upload",
+        "doc",
+        "document",
+        "sitemap",
+        "convert",
+        "export",
+        "parse"
+    ]
+}
+EOF
+    fi
+
+    if [ ! -f "$HOME/.gf/crlf.json" ]; then
+        cat > "$HOME/.gf/crlf.json" << 'EOF'
+{
+    "flags": "-iE",
+    "patterns": [
+        "redirect",
+        "url",
+        "next",
+        "return",
+        "callback",
+        "continue",
+        "dest",
+        "forward",
+        "path",
+        "host",
+        "location",
+        "lang",
+        "redir",
+        "goto",
+        "target",
+        "link"
+    ]
+}
+EOF
+    fi
+
+    if [ ! -f "$HOME/.gf/ldap.json" ]; then
+        cat > "$HOME/.gf/ldap.json" << 'EOF'
+{
+    "flags": "-iE",
+    "patterns": [
+        "username",
+        "user",
+        "uid",
+        "cn",
+        "dn",
+        "ou",
+        "base",
+        "filter",
+        "search",
+        "query",
+        "login",
+        "auth",
+        "group",
+        "member",
+        "ldap",
+        "bind",
+        "attribute"
+    ]
+}
+EOF
+    fi
+}
+
+# Roda "gf <pattern>" se o arquivo de pattern existir em ~/.gf; senão avisa e
+# gera um arquivo de saída vazio, sem travar o resto do pipeline.
+gf_classify() {
+    local pattern_name="$1"
+    local out_file="$2"
+    if [ -f "$HOME/.gf/${pattern_name}.json" ]; then
+        gf "$pattern_name" < "$WORK/params/params.txt" > "$out_file"
+    else
+        echo -e "${YELLOW}[!] Padrão gf '$pattern_name' não encontrado em ~/.gf — pulando essa classe.${RESET}"
+        : > "$out_file"
+    fi
 }
 
 # ===== PARSE DE ARGUMENTOS =====
@@ -113,6 +246,7 @@ if [ -z "$TARGET" ]; then
 fi
 
 check_tools
+ensure_custom_gf_patterns
 
 DOMAIN=$(echo "$TARGET" | sed 's|https\?://||;s|/$||')
 DATE=$(date +%F)
@@ -219,11 +353,19 @@ grep "=" "$WORK/urls/all_urls.txt" | sort -u > "$WORK/params/params.txt"
 
 # ===== FASE 9: CLASSIFICAÇÃO DE VETORES =====
 print_banner "FASE 9: CLASSIFICAÇÃO DE VETORES"
-cat "$WORK/params/params.txt" | gf xss > "$WORK/vectors/xss.txt"
-cat "$WORK/params/params.txt" | gf sqli > "$WORK/vectors/sqli.txt"
-cat "$WORK/params/params.txt" | gf ssrf > "$WORK/vectors/ssrf.txt"
-cat "$WORK/params/params.txt" | gf lfi > "$WORK/vectors/lfi.txt"
-cat "$WORK/params/params.txt" | gf redirect > "$WORK/vectors/redirect.txt"
+# XSS, SQLi, NoSQLi, Command Injection, SSTI, LFI, XXE, SSRF, Open Redirect,
+# CRLF/Header Injection e LDAP Injection.
+gf_classify xss      "$WORK/vectors/xss.txt"
+gf_classify sqli     "$WORK/vectors/sqli.txt"
+gf_classify nosqli   "$WORK/vectors/nosqli.txt"
+gf_classify rce      "$WORK/vectors/cmdi.txt"
+gf_classify ssti     "$WORK/vectors/ssti.txt"
+gf_classify lfi      "$WORK/vectors/lfi.txt"
+gf_classify xxe      "$WORK/vectors/xxe.txt"
+gf_classify ssrf     "$WORK/vectors/ssrf.txt"
+gf_classify redirect "$WORK/vectors/redirect.txt"
+gf_classify crlf     "$WORK/vectors/crlf.txt"
+gf_classify ldap     "$WORK/vectors/ldap.txt"
 
 # ===== FASE 10: HEADERS =====
 print_banner "FASE 10: HEADERS SENSÍVEIS"
@@ -243,5 +385,10 @@ echo -e "🧪 Params: $(wc -l < $WORK/params/params.txt)"
 [ -f "$WORK/tech/js_secrets.txt" ] && echo -e "🔑 JS Secrets: $(wc -l < $WORK/tech/js_secrets.txt)"
 [ -f "$WORK/cms/wpscan_results.txt" ] && echo -e "📝 WPScan Concluído!"
 echo -e "💥 Vulns (nuclei): $(wc -l < $WORK/nuclei.txt)"
+echo -e "🧬 Vetores classificados:"
+for v in xss sqli nosqli cmdi ssti lfi xxe ssrf redirect crlf ldap; do
+    vfile="$WORK/vectors/$v.txt"
+    [ -f "$vfile" ] && echo -e "   - $v: $(wc -l < "$vfile")"
+done
 [ -n "$CUSTOM_HEADER" ] && echo -e "🏷️  Header usado: $CUSTOM_HEADER"
 [ -n "$MAX_RPS" ] && echo -e "⏱️  Rate limit usado: $MAX_RPS req/s"
